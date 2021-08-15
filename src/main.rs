@@ -1,17 +1,15 @@
-use rand::Rng;
-
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
 };
 
-fn gen_rand_bg_color(rng: &mut rand::rngs::ThreadRng) -> wgpu::Color {
+fn gen_rand_bg_color() -> wgpu::Color {
     wgpu::Color {
-        r: rng.gen_range(0.0..1.0),
-        g: rng.gen_range(0.0..1.0),
-        b: rng.gen_range(0.0..1.0),
-        a: rng.gen_range(0.0..1.0),
+        r: rand::random::<f64>(),
+        g: rand::random::<f64>(),
+        b: rand::random::<f64>(),
+        a: rand::random::<f64>(),
     }
 }
 
@@ -28,8 +26,6 @@ struct State {
 
 impl State {
     async fn new(window: &Window) -> Self {
-        let mut rng = rand::thread_rng();
-
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
@@ -112,14 +108,16 @@ impl State {
             },
         });
 
-        Self {
+        let bg_color = gen_rand_bg_color();
+
+        State {
             surface,
             device,
             queue,
             sc_desc,
             swap_chain,
             size,
-            bg_color: gen_rand_bg_color(&mut rng),
+            bg_color,
             render_pipeline,
         }
     }
@@ -133,8 +131,14 @@ impl State {
         }
     }
 
-    fn input(&mut self, _event: &WindowEvent) -> bool {
-        false
+    fn input(&mut self, event: &WindowEvent) -> bool {
+        match event {
+            WindowEvent::MouseInput { .. } => {
+                self.bg_color = gen_rand_bg_color();
+                true
+            }
+            _ => false,
+        }
     }
 
     fn update(&mut self) {}
@@ -179,52 +183,46 @@ fn main() {
 
         let mut state = pollster::block_on(State::new(&window));
 
-        event_loop.run(move |event, _, control_flow| {
-            let mut rng = rand::thread_rng();
-            match event {
-                Event::WindowEvent {
-                    ref event,
-                    window_id,
-                } if window_id == window.id() => {
-                    if !state.input(event) {
-                        match event {
-                            WindowEvent::CloseRequested
-                            | WindowEvent::KeyboardInput {
-                                input:
-                                    KeyboardInput {
-                                        state: ElementState::Pressed,
-                                        virtual_keycode: Some(VirtualKeyCode::Escape),
-                                        ..
-                                    },
-                                ..
-                            } => *control_flow = ControlFlow::Exit,
-                            WindowEvent::Resized(physical_size) => {
-                                state.resize(*physical_size);
-                            }
-                            WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                                state.resize(**new_inner_size);
-                            }
-                            WindowEvent::MouseInput { .. } => {
-                                state.bg_color = gen_rand_bg_color(&mut rng);
-                            }
-                            _ => {}
+        event_loop.run(move |event, _, control_flow| match event {
+            Event::WindowEvent {
+                ref event,
+                window_id,
+            } if window_id == window.id() => {
+                if !state.input(event) {
+                    match event {
+                        WindowEvent::CloseRequested
+                        | WindowEvent::KeyboardInput {
+                            input:
+                                KeyboardInput {
+                                    state: ElementState::Pressed,
+                                    virtual_keycode: Some(VirtualKeyCode::Escape),
+                                    ..
+                                },
+                            ..
+                        } => *control_flow = ControlFlow::Exit,
+                        WindowEvent::Resized(physical_size) => {
+                            state.resize(*physical_size);
                         }
+                        WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                            state.resize(**new_inner_size);
+                        }
+                        _ => {}
                     }
                 }
-                Event::RedrawRequested(_) => {
-                    state.update();
-                    match state.render() {
-                        Ok(_) => {}
-                        Err(wgpu::SwapChainError::Lost) => state.resize(state.size),
-                        Err(wgpu::SwapChainError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-                        Err(e) => eprintln!("{:?}", e),
-                    }
-                }
-                Event::MainEventsCleared => {
-                    window.request_redraw();
-                }
-                _ => {}
             }
+            Event::RedrawRequested(_) => {
+                state.update();
+                match state.render() {
+                    Ok(_) => {}
+                    Err(wgpu::SwapChainError::Lost) => state.resize(state.size),
+                    Err(wgpu::SwapChainError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+                    Err(e) => eprintln!("{:?}", e),
+                }
+            }
+            Event::MainEventsCleared => {
+                window.request_redraw();
+            }
+            _ => {}
         });
     }
     #[cfg(target_arch = "wasm32")]
