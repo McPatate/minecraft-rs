@@ -1,3 +1,5 @@
+mod texture;
+
 use wgpu::util::DeviceExt;
 
 use winit::{
@@ -19,7 +21,7 @@ fn gen_rand_bg_color() -> wgpu::Color {
 #[derive(Copy, Clone, Debug)]
 struct Vertex {
     position: [f32; 3],
-    color: [f32; 3],
+    tex_coords: [f32; 2],
 }
 
 unsafe impl bytemuck::Pod for Vertex {}
@@ -40,7 +42,7 @@ impl Vertex {
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: wgpu::VertexFormat::Float32x2,
                 },
             ],
         }
@@ -50,19 +52,19 @@ impl Vertex {
 const VERTICES: &[Vertex] = &[
     Vertex {
         position: [-0.25, 0.25, 0.0],
-        color: [0.0, 1.0, 0.0],
+        tex_coords: [0.0, 0.0],
     },
     Vertex {
         position: [-0.25, -0.25, 0.0],
-        color: [0.0, 1.0, 0.0],
+        tex_coords: [0.0, 1.0],
     },
     Vertex {
         position: [0.25, -0.25, 0.0],
-        color: [0.0, 1.0, 0.0],
+        tex_coords: [1.0, 1.0],
     },
     Vertex {
         position: [0.25, 0.25, 0.0],
-        color: [0.0, 1.0, 0.0],
+        tex_coords: [1.0, 0.0],
     },
 ];
 
@@ -81,6 +83,11 @@ struct State {
     num_vertices: u32,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
+    diffuse_bind_group: wgpu::BindGroup,
+    diffuse_texture: texture::Texture,
+    chal_dbg: wgpu::BindGroup,
+    chal_dt: texture::Texture,
+    use_chall: bool,
 }
 
 impl State {
@@ -120,6 +127,69 @@ impl State {
 
         let swap_chain = device.create_swap_chain(&surface, &sc_desc);
 
+        let diffuse_bytes = include_bytes!("mush.png");
+        let chal_db = include_bytes!("happy-tree.png");
+
+        let diffuse_texture =
+            texture::Texture::from_bytes(&device, &queue, diffuse_bytes, "shroom.png").unwrap();
+        let chal_dt =
+            texture::Texture::from_bytes(&device, &queue, chal_db, "happy-tree.png").unwrap();
+
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler {
+                            comparison: false,
+                            filtering: true,
+                        },
+                        count: None,
+                    },
+                ],
+                label: Some("my_texture_bind_group_layout"),
+            });
+
+        let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
+                },
+            ],
+            label: Some("my_diffuse_bind_group"),
+        });
+        let chal_dbg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&chal_dt.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&chal_dt.sampler),
+                },
+            ],
+            label: Some("chal_diffuse_bind_group"),
+        });
+
         let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: Some("My Shader"),
             flags: wgpu::ShaderFlags::all(),
@@ -129,7 +199,7 @@ impl State {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("My Render Pipeline Layout"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&texture_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -198,6 +268,11 @@ impl State {
             num_vertices,
             index_buffer,
             num_indices,
+            diffuse_bind_group,
+            diffuse_texture,
+            chal_dbg,
+            chal_dt,
+            use_chall: false,
         }
     }
 
@@ -214,6 +289,18 @@ impl State {
         match event {
             WindowEvent::MouseInput { .. } => {
                 self.bg_color = gen_rand_bg_color();
+                true
+            }
+            WindowEvent::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state,
+                        virtual_keycode: Some(VirtualKeyCode::Space),
+                        ..
+                    },
+                ..
+            } => {
+                self.use_chall = *state == ElementState::Pressed;
                 true
             }
             _ => false,
@@ -243,6 +330,11 @@ impl State {
                 depth_stencil_attachment: None,
             });
             render_pass.set_pipeline(&self.render_pipeline);
+            if self.use_chall {
+                render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+            } else {
+                render_pass.set_bind_group(0, &self.chal_dbg, &[]);
+            }
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
